@@ -18,9 +18,7 @@ import random
 # from tqdm import tqdm
 import cv2 as cv
 
-from network.pixor import PixorNet
-from network.pixor_fusion import PixorNet_Fusion
-from network.spagnn import SpAGNNModel
+from models.model import MultiHeadAttention
 
 # from data.kitti_loader_lidar import KittiDataset, KittiDataset_Fusion
 from data.nusceces import NuscenesPrediction
@@ -82,19 +80,16 @@ def train(args):
 
     ## INITIALIZE MODELS
     n_features = 35
-    pixor = PixorNet(n_features, groupnorm=args.groupnorm)
-    pixor = pixor.cuda()
-    pixor = nn.DataParallel(pixor, device_ids=num_gpu)
-    spagnn = SpAGNNModel(args)
+    model = MultiHeadAttention(n_head, d_inputs, d_inputs_emb)
+    model = model.cuda()
+    model = nn.DataParallel(model, device_ids=num_gpu)
+
 
     ## INITIALIZE OPTIMIZERS AND SCHEDULERS
-    class_criterion = nn.BCELoss(reduction='none')  # TODO (Junan): add hard negative mining
     reg_criterion = nn.SmoothL1Loss(reduction='none')
-
-    class_criterion = class_criterion.cuda()
     reg_criterion = reg_criterion.cuda()
 
-    optimizer = optim.RMSprop(pixor.parameters(), lr=args.lr,
+    optimizer = optim.RMSprop(model.parameters(), lr=args.lr,
                                   momentum=args.momentum,
                                   weight_decay=args.weight_decay)
     scheduler = lr_scheduler.MultiStepLR(
