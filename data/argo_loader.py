@@ -88,7 +88,7 @@ def process_scene(argo_scene):
             scene_array[scene_idx[track], headers[track]+1:frame, :] = scene_array[scene_idx[track], headers[track], :]
         xy =  np.array([row['x'],row['y']])
         xy = xy - origin
-        rot = np.array([[math.cos(heading),math.sin(heading)],[-math.sin(heading), math.cos(heading)]])
+        rot = np.array([[math.cos(heading),-math.sin(heading)],[math.sin(heading), math.cos(heading)]])
         xy = rot @ xy
         scene_array[scene_idx[track], frame, :2] = xy
     scene_array[:,:,2] = np.concatenate((scene_array[:,1:,0],np.expand_dims(scene_array[:,-1,0], axis = 1)), axis = 1)-scene_array[:,:,0]
