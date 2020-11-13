@@ -16,21 +16,17 @@ import os.path as osp
 import subprocess
 import random
 # from tqdm import tqdm
-import cv2 as cv
 
 from models.model import MultiHeadAttention
 
 # from data.kitti_loader_lidar import KittiDataset, KittiDataset_Fusion
-from data.nusceces import NuscenesPrediction
+from data.argo_loader import Argo
 from utils.logger import set_logger, get_logger
-from kitti_evaluate import predict_kitti_to_file
-from utils.avg_meters import AverageMeter
-from utils.NLL_loss import Gaussian2DLikelihood
-from utils.postprocessing import postprocess_detections
+
 
 
 def get_eval_dataset(args):
-    eval_data = NuscenesPrediction(split="val")
+    eval_data = Argo(split="val")
     eval_loader = DataLoader(
         eval_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_worker,
         pin_memory=True)
@@ -39,7 +35,7 @@ def get_eval_dataset(args):
 
 def get_train_dataset(args):
     # n_features = 35 if args.no_reflex else 36
-    train_data = NuscenesPrediction()
+    train_data = Argo(split="train")
     train_loader = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_worker,
         pin_memory=True)
@@ -71,15 +67,10 @@ def train(args):
     ts = time.time()
 
     ## INITIALIZE DATASETS
-    # TODO (Xiangyu): need to update dataset with tracking data for predictions labels
-    #  - LiDAR (BEV)
-    #  - HD Maps [nuScenes]
-    # Labels: detections [centers, bounding boxes], **future locations "tracking labels" [x, y]
     train_data, train_loader = get_train_dataset(args)
     eval_data, eval_loader = get_eval_dataset(args)
 
     ## INITIALIZE MODELS
-    n_features = 35
     model = MultiHeadAttention(n_head, d_inputs, d_inputs_emb)
     model = model.cuda()
     model = nn.DataParallel(model, device_ids=num_gpu)
@@ -234,8 +225,8 @@ def parse_args():
     parser = configargparse.ArgParser(
         description="Train PIXOR model",
         default_config_files=["configs/spagnn.cfg"])
-    parser.add('-c', '--config', required=True,
-        is_config_file=True, help='config file')
+    # parser.add('-c', '--config', required=True,
+    #     is_config_file=True, help='config file')
 
     args, unparsed = parser.parse_known_args()
     for arg in unparsed:
