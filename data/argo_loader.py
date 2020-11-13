@@ -1,124 +1,135 @@
-import sys
-import os
-import numpy as np
 import pandas as pd
-import argparse
+from data.utils_argo import compute
+import torch
+from torch.utils.data import DataLoader, Dataset
+import os 
+import numpy as np
 import math
+from numpy import cos, sin
 
 
-def calculate_heading(start, end):
-    dx = end[0]-start[0]
-    dy = end[1]-start[1]
-    if dy>=0 and dx>0:
-        theta = math.atan(dy/dx)
-    if dy>=0 and dx <0:
-        theta = np.pi - math.atan(dy/(-dx))
-    if dy<=0 and dx <0:
-        theta = math.atan((-dy)/(-dx)) + np.pi
-    if dy<=0 and dx >0:
-        theta = -math.atan((-dy)/dx)
-    if dx == 0:
-        if dy>0:
-            theta = np.pi/2
-        elif dy == 0:
-            theta = 0
-        else:
-            theta = - np.pi/2
-    if theta < -np.pi:
-        theta += 2*np.pi
-    if theta > np.pi:
-        theta -= 2*np.pi
-        
-    return theta
-
-def process_scene(argo_scene):
-    # every scene is a batch
-    data = pd.DataFrame(columns=['frame_id',
-                                 'object_type',
-                                 'track_id',
-                                 'x', 'y'
-                                 ])
-    
-    
-    min_frame = argo_scene['TIMESTAMP'][0]
-    for index, row in argo_scene.iterrows():
-        if row['OBJECT_TYPE'] == 'AV' or row['OBJECT_TYPE'] == 'AGENT':
-            data_point = pd.Series({'frame_id': int((argo_scene['TIMESTAMP'][index]-min_frame)*10),
-                                'object_type': row['OBJECT_TYPE'] ,
-                                'track_id': row['TRACK_ID'],
-                                'x': row['X'],
-                                'y': row['Y']
-                                   })
-            data = data.append(data_point, ignore_index=True)
-
-    if len(data.index) == 0:
-        return None
-    objects = data.track_id.unique()
-    
-    data.sort_values('frame_id', inplace=True)
-   
-#    origin_idx = index[data['frame_id']==0 and data['object_type'] == 'AV'].tolist()[0]
-    origin_idx = data.index[(data['frame_id'] == 0) & (data['object_type'] == 'AV')][0]
-    #print(origin_idx)
-    origin = np.array([data.iloc[origin_idx]['x'],data.iloc[origin_idx]['y']])
-    next_idx = data.index[(data['frame_id'] == 1) & (data['object_type'] == 'AV')]
-    if len(next_idx)> 0:
-        next_idx = next_idx[0]
-        next = [data.iloc[next_idx]['x'],data.iloc[next_idx]['y']]
-        heading = calculate_heading(origin, next)
-    else:
-        heading = 0
-    
-    # 0-indexed frame ids
-    max_timesteps = data['frame_id'].max()+1
-    scene_array = np.zeros((len(objects),max_timesteps,6))
-    headers = dict()
-    scene_idx = dict()
-    index = 0
-    for obj in objects:
-        headers[obj] = 0
-        scene_idx[obj] = index
-        index += 1
-    for index, row in data.iterrows():
-        track = row['track_id']
-        frame = row['frame_id']
-        if headers[track] != (frame-1):
-            #occlusion
-            #duplicate previous element
-            scene_array[scene_idx[track], headers[track]+1:frame, :] = scene_array[scene_idx[track], headers[track], :]
-        xy =  np.array([row['x'],row['y']])
-        xy = xy - origin
-        rot = np.array([[math.cos(heading),-math.sin(heading)],[math.sin(heading), math.cos(heading)]])
-        xy = rot @ xy
-        scene_array[scene_idx[track], frame, :2] = xy
-    scene_array[:,:,2] = np.concatenate((scene_array[:,1:,0],np.expand_dims(scene_array[:,-1,0], axis = 1)), axis = 1)-scene_array[:,:,0]
-    scene_array[:,:,3] = np.concatenate((scene_array[:,1:,1],np.expand_dims(scene_array[:,-1,1], axis = 1)), axis = 1)-scene_array[:,:,1]
-    scene_array[:,:,4] = np.concatenate((scene_array[:,1:,2],np.expand_dims(scene_array[:,-1,2], axis = 1)), axis = 1)-scene_array[:,:,2]
-    scene_array[:,:,5] = np.concatenate((scene_array[:,1:,3],np.expand_dims(scene_array[:,-1,3], axis = 1)), axis = 1)-scene_array[:,:,3]
-    
-    
-    return scene_array
+def transform(theta, tracks_obs):
+    th = -theta + np.pi/2
+    Rot = np.array([[cos(th),-sin(th)],[sin(th),cos(th)]])
+    new_pos = (np.dot(Rot, tracks_obs.reshape(-1,2).T)).T
+    return new_pos
 
 def argo_create(path):
-    scenes = dict()
-
+    scenes = []
     for fname in os.listdir(path):
         if fname.endswith('csv'):
-            scenes[fname[:len(fname)-4]] = pd.read_csv(path+"/"+fname)
+            scenes.append(path+"/"+fname)
     return scenes
-            
-def process_data(data_path):
-    argo_data = argo_create(data_path)
-    scenes = []
-    for scene_name in argo_data.keys():
-        scene = process_scene(argo_data[scene_name])
-        scenes.append(scene)
-    print(f'Processed {len(scenes):.2f} scenes')
+
+
+def process_data(data_path, obs_len, pred_len):
+    # argo_data = argo_create(data_path)
+
+    # count = 0
+    # for scene_name in argo_data.keys():
+        
+    # read data
+    tracks_obs, agent_track_pred = compute(data_path, obs_len)
+
+    # create edge_index
+    num_obj = tracks_obs.shape[0]
+    edge_index_row2 = torch.linspace(1, num_obj-1, steps=num_obj-1).view(1,-1)
+    edge_index_row1 = torch.zeros(num_obj - 1).view(1,-1)
+    edge_index = torch.cat((edge_index_row1, edge_index_row2),0)
+    edge_index = edge_index.long()
+
+    # 
+    tracks_obs = tracks_obs[:2,:,3:5].astype('float64')
+    agent_track_pred = agent_track_pred[:,3:5].astype('float64')
+
+
+    # normalize            
+    agent_track_pred = agent_track_pred - tracks_obs[0,-1,:]
+    tracks_obs = tracks_obs - tracks_obs[0,-1,:]  
+
+    # cal velocity
+    v = np.zeros_like(tracks_obs)
+    for i in range(tracks_obs.shape[0]):
+        for j in range(tracks_obs.shape[1]-1):
+            v[i,j,:] = tracks_obs[i,j+1,:] - tracks_obs[i,j,:]
+        v[i,-1,:] = v[i,-2,:]
+    
+    # cal acceleration
+    a = np.zeros_like(tracks_obs)
+    for i in range(v.shape[0]):
+        for j in range(a.shape[1]-1):
+            a[i,j,:] = v[i,j+1,:] - v[i,j,:]
+        a[i,-1,:] = a[i,-2,:]
+
+    # cal theta
+    theta = np.zeros(v.shape[1])
+    for k in range(v.shape[1]):
+        if v[0,k,1]>0 and v[0,k,0] >0:
+            theta[k] = math.atan(v[0,k,1]/v[0,k,0])
+        if v[0,k,1]>0 and v[0,k,0] <0:
+            theta[k] = np.pi - math.atan(v[0,k,1]/(-v[0,k,0]))
+        if v[0,k,1]<0 and v[0,k,0] <0:
+            theta[k] = math.atan((-v[0,k,1])/(-v[0,k,0])) + np.pi
+        if v[0,k,1]<0 and v[0,k,0] >0:
+            theta[k] = -math.atan((-v[0,k,1])/v[0,k,0])
+
+        if theta[k]>2*np.pi:
+            theta[k,0] = theta[k] - 2*np.pi
+        if theta[k]<0:
+            theta[k] = theta[k] + 2*np.pi
+
+        if k>0:
+            if theta[k]-theta[k-1]>np.pi:
+                theta[k] -= 2*np.pi
+            elif theta[k]-theta[k-1]<-np.pi:
+                theta[k] += 2*np.pi        
+    
+
+    # transform coodinate
+    # obs
+    th = np.mean(theta[-4:])
+    track_obs = transform(th, tracks_obs).reshape(-1,obs_len,2)
+    v = transform(th, v).reshape(-1,obs_len,2)
+    a = transform(th, a).reshape(-1,obs_len,2)
+    new_tracks_obs = np.concatenate((track_obs,v,a),2)
+    # pred
+    new_agent_pred = transform(th, agent_track_pred).reshape(pred_len,2)
+
+
+    x = torch.from_numpy(new_tracks_obs).float()
+    y = torch.from_numpy(new_agent_pred).float()
+
+    return x, y 
+
+        # count += 1
+
+        # print('\r'+str(count)+'/'+str(len(argo_data)),end="")
+
+
+
+
+class Argo(Dataset):
+    def __init__(self, root="/home/junanchen/anaconda3/envs/GNN/vehicleTrajectoryForecasting-main/mini/", split="train", obs_len=20, pred_len=30):
+        self.obs_len, self.pred_len = obs_len, pred_len
+        self.root = root + split + '/'
+        self.argo_data = argo_create(self.root)
+
+
+    def __getitem__(self, item):
+        data_path = self.argo_data[item]
+        x, y = process_data(data_path, self.obs_len, self.pred_len)
+        sample = {'x':x, 'y':y}
+        return sample
+
+    def __len__(self):
+        return len(self.argo_data)
+
+
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=str, required=True)
-    #parser.add_argument('--output_path', type=str, required=True)
-    args = parser.parse_args()
-    process_data(args.data)
+    data = Argo(split = 'train')
+    dataloader = DataLoader(data, batch_size=3, shuffle = True )
+
+    for i, batch_data in enumerate(dataloader):
+        print('batch',batch_data['x'].size())
