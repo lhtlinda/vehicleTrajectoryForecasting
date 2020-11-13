@@ -16,7 +16,7 @@ class ScaledDotProductAttention(nn.Module):
 
         attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
 
-        attn = self.dropout(F.softmax(attn, dim=-1))
+        attn = self.dropout(nn.functional.softmax(attn, dim=-1))
         output = torch.matmul(attn, v)
 
         return output, attn
@@ -54,7 +54,7 @@ class MultiHeadAttention(nn.Module):
         # embed inputs  [sz_b, len_obs, 6] ->  [sz_b, len_obs, d_emb]
         inputs_emb = self.w_inputs_emb(inputs)
         residual = inputs_emb[:,-1,:].unsqueeze(1)
-
+        
         # Pass through the pre-attention projection: b x len_obs x (n*d_emb)
         # Separate different heads: b x len_obs x n x d_emb
         q = self.w_multiHead_emb(inputs_emb).view(sz_b, len_obs, n_head, d_inputs_emb)
