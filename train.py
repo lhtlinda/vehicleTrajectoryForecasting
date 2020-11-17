@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
-from torch.utils.data import DataLoader
+# from torch.utils.data import DataLoader
+from torch_geometric.data import DataLoader
 import torch.nn.functional as F
 
 import argparse
@@ -16,18 +17,21 @@ import os.path as osp
 import subprocess
 import random
 # from tqdm import tqdm
-from torch_utils import AverageMeter
+from utils.avg_meters import AverageMeter
 
-from models.model import MultiHeadAttention
+from models.model import transformer
 
 # from data.kitti_loader_lidar import KittiDataset, KittiDataset_Fusion
-from data.argo_loader import Argo
+from data.argo_loader import Argo, Argo_geometric
 from utils.logger import set_logger, get_logger
 
 
 
 def get_eval_dataset(args):
-    eval_data = Argo(root= args.train_dir, split="val")
+    eval_data = Argo_geometric(
+        obs_len = args.obs_len, pred_len = args.pred_len, raw_data_path = args.train_dir, 
+        processed_data_path = args.processed_data_path+ 'val.pt', split = 'val', root=args.train_dir)
+
     eval_loader = DataLoader(
         eval_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_worker,
         pin_memory=True)
@@ -36,7 +40,10 @@ def get_eval_dataset(args):
 
 def get_train_dataset(args):
     # n_features = 35 if args.no_reflex else 36
-    train_data = Argo(root= args.train_dir,split="train")
+    train_data = Argo_geometric(
+        obs_len = args.obs_len, pred_len = args.pred_len, raw_data_path = args.train_dir, 
+        processed_data_path = args.processed_data_path + 'train.pt', split = 'train', root=args.train_dir)
+
     train_loader = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, num_workers=args.num_worker,
         pin_memory=True)
@@ -73,8 +80,8 @@ def train(args):
 
     ## INITIALIZE MODELS
     
-    model = MultiHeadAttention(args.n_head, args.d_inputs, args.d_inputs_emb)
-#    model = model.cuda()
+    model = transformer(args.n_head, args.d_inputs, args.d_inputs_emb)
+    model = model.cuda()
 #    model = nn.DataParallel(model, device_ids=num_gpu)
     model = nn.DataParallel(model)
 
@@ -84,8 +91,10 @@ def train(args):
     reg_criterion = reg_criterion.cuda()
     
     
-    optimizer = optim.RMSprop(model.parameters(), lr=args.lr,
-                                  momentum=args.momentum,
+    # optimizer = optim.RMSprop(model.parameters(), lr=args.lr,
+    #                               momentum=args.momentum,
+    #                               weight_decay=args.weight_decay)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr,
                                   weight_decay=args.weight_decay)
     # placeholder, list parsing doesn't work correctly atm
     lr_milestones = [15,25,35]
@@ -119,8 +128,8 @@ def train(args):
     processes = []
     for epoch in range(start_epoch, args.epochs):
         model.train()
-        avg_loss =  AverageMeter('Loss', len(train_loader))
-        avg_time =  AverageMeter('Time', len(train_loader))
+        avg_loss =  AverageMeter()#('Loss', len(train_loader))
+        avg_time =  AverageMeter()#('Time', len(train_loader))
 #        ts = time.time()
 #
 #        avg_class_loss = AverageMeter()
@@ -133,63 +142,23 @@ def train(args):
         for iteration, batch in enumerate(train_loader):
 #            import pdb; pdb.set_trace()
 
-#            lidar = batch['lidar'].cuda(non_blocking=True)
-#            hdmap = batch['hdmap'].cuda(non_blocking=True)
-#            # class_labels = batch['cl'].cuda(non_blocking=True)
-#            # reg_labels = batch['rl'].cuda(non_blocking=True)
-#            bboxes = batch['bboxes'].cuda(non_blocking=True)
-#            pred_labels = batch['future_xy'].cuda(non_blocking=True)
 #
 #            avg_load_time.update(time.time() - load_start)
 #            forward_start = time.time()
 
-            ## DETECTION LOSS
-            # TODO: ask Xiangyu which feature to output
-#            class_outs, reg_outs, features = pixor(lidar)  # TODO: change to output features
-            # class_outs = class_outs.squeeze(1)
-            # class_loss, reg_loss = \
-            #     compute_detection_loss(epoch, class_outs, reg_outs,
-            #         class_labels, reg_labels, class_criterion,
-            #         reg_criterion, args)
-            # avg_fw_time.update(time.time() - forward_start)
-            # avg_class_loss.update(class_loss.item())
-            # avg_reg_loss.update(reg_loss.item() \
-            #     if not isinstance(reg_loss, int) else reg_loss)
-
-            ## PREDICTION LOSS
-            # features: shape B x 256 x H x W
-            # actor_batch_ind: list of len N (N is the number of actors in the batch)
-            # ie: if N = 3, batchsize = 2: [0, 0, 1]
-#            actor_features, actor_bboxes, actor_batch_ind, actor_gt_ind = postprocess_detections(features, class_outs, reg_outs, reg_labels)
-            # predictions: shape No x T x 5
-            # det: 5 x det
-            # batch_ind: [0, 0, 1]
-            # gt: 7 x det
-            # gt_ind: [0, 2, 4, 3, 1]
-#            predictions = spagnn(actor_features, actor_bboxes, actor_batch_ind)  # output: mu_x, mu_y, sigma_x, sigma_y, rho
-            # returns for each ground truth other, pair up prediction + label
-#            pred_nll_loss = Gaussian2DLikelihood(
-#                epoch, pred_labels, predictions, actor_gt_ind
-#            )  # Junan
-            # pred_labels: n_gt x T x 2
-            
-#            loss = alpha1 * pred_nll_loss  # + alpha2 * class_loss + alpha3 * reg_loss
-#            avg_total_loss.update(loss.item())
 
 #            backward_start = time.time()
             start = time.time()
             optimizer.zero_grad()
             
-            x = batch['x']
-            x = x.view(x.shape[0]*x.shape[1],x.shape[2],x.shape[3])
+            x = batch.x.cuda(non_blocking=True)
             
-            y = batch['y']
-            y = y.view(y.shape[0]*y.shape[2], y.shape[1])
+            y = batch.y.cuda(non_blocking=True)
+
         
-            output,attn = model(x)
+            output = model(x)
             output = output.squeeze(1)
-#            print('output', output.shape)
-#            print('y', y.shape)
+
             loss = reg_criterion(output, y)
             loss = torch.flatten(loss).sum()
             avg_loss.update(loss.item())
@@ -260,9 +229,7 @@ def parse_args():
     parser = configargparse.ArgParser(
         description="Train model",
         default_config_files=["configs/attn.cfg"])
-    # parser.add('-c', '--config', required=True,
-    #     is_config_file=True, help='config file')
-#    parser.add('-c', '--config_file', required=True, is_config_file=True, help='config file path')
+
     args, unparsed = parser.parse_known_args()
     for arg in unparsed:
         split = arg.find("=")
@@ -289,8 +256,8 @@ if __name__ == "__main__":
     if not osp.exists(savepath):
         os.makedirs(savepath)
 
-    np.random.seed(args.seed)
-    random.seed(args.seed)
+    # np.random.seed(args.seed)
+    # random.seed(args.seed)
     logger = set_logger(name=args.shortname, level=args.loglevel,
                         filepath=osp.join(savepath, 'log.txt'))
     logger.info("=> Training mode")
