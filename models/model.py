@@ -1,7 +1,12 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import copy
 
+
+def clones(module, N):
+    "Produce N identical layers."
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
 
 
 class ScaledDotProductAttention(nn.Module):
@@ -42,7 +47,7 @@ class MultiHeadAttention(nn.Module):
         self.attention = ScaledDotProductAttention(temperature=d_inputs_emb ** 0.5)
 
         # self.dropout = nn.Dropout(dropout)
-        # self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
+        self.layer_norm = nn.LayerNorm(d_inputs_emb, eps=1e-6)
 
 
     def forward(self, inputs):
@@ -78,7 +83,41 @@ class MultiHeadAttention(nn.Module):
         output = self.fc(output)
         # output = self.dropout(self.fc(output))
         output += residual
+        # print('check',output.size())
+        output = self.layer_norm(output)
 
-        # output = self.layer_norm(output)
+        return output
 
-        return output, attn
+
+
+class transformer(nn.Module):
+    ''' Multi-Head Attention module '''
+
+    def __init__(self, n_head, d_inputs, d_inputs_emb, dropout=0.1):
+        super().__init__()
+
+        self.n_head = n_head
+        self.d_inputs = d_inputs
+        self.d_inputs_emb = d_inputs_emb
+
+        #self.sublayer = clones(MultiHeadAttention(n_head, d_inputs, d_inputs_emb), 1)
+        self.sublayer1 = MultiHeadAttention(n_head, d_inputs, d_inputs_emb)
+        self.sublayer2 = MultiHeadAttention(n_head, d_inputs, d_inputs_emb)
+        self.sublayer3 = MultiHeadAttention(n_head, d_inputs, d_inputs_emb)
+        self.fc = nn.Sequential(
+            nn.Linear(d_inputs_emb, 256, bias=False),
+            nn.ReLU(),
+            nn.Linear(256, 2, bias=False),
+        )
+
+
+
+    def forward(self, inputs):
+        
+        output = self.sublayer1(inputs)
+        output = self.sublayer2(inputs)
+        output = self.sublayer3(inputs)
+        output = self.fc(output)
+
+        
+        return output
