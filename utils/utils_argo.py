@@ -326,6 +326,18 @@ def window_shift(inputs, label):
     return inputs[:,1:,:]
 
 
+def window_shift_batch_version(inputs, label):
+    # inputs: bt_szx20x6 [x, y, vx, vy, ax, ay]
+    # label: bt_szx2 [x, y]
+    vx, vy = label[:,0] - inputs[:,-1,0],  label[:,1] - inputs[:,-1,1]
+    ax, ay = vx - inputs[:,-1,2], vy - inputs[:,-1,3]
+
+    label = torch.cat((label, vx.unsqueeze(1), vy.unsqueeze(1), ax.unsqueeze(1), ay.unsqueeze(1)), 1) 
+    label = label.unsqueeze(1)
+    inputs = torch.cat((inputs,label),1)
+
+    return inputs[:,1:,:]
+
 
 if __name__ == '__main__':
 	#dataset = MyOwnDataset(root='/home/junanchen/anaconda3/envs/GNN/argo',coord = 'track_ego')
