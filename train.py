@@ -18,7 +18,8 @@ import subprocess
 import random
 # from tqdm import tqdm
 from utils.avg_meters import AverageMeter
-
+from utils.utils_argo import window_shift_batch_version
+from utils.pred_eval import get_displacement_errors
 from models.model import transformer
 
 # from data.kitti_loader_lidar import KittiDataset, KittiDataset_Fusion
@@ -151,11 +152,14 @@ def train(args):
             start = time.time()
             optimizer.zero_grad()
             
+            # x: [batch_size*30]x20x6
             x = batch.x.cuda(non_blocking=True)
-            
+            # input()
+
+            # [batch_size*30]x2
             y = batch.y.cuda(non_blocking=True)
 
-        
+            # [batch_size*30]x1x2
             output = model(x)
             output = output.squeeze(1)
 
@@ -181,33 +185,41 @@ def train(args):
             epoch, time.time() - ts))
 
         if epoch % args.eval_every_epoch == 0 and epoch >= args.start_eval:
-            print("Eval not implemented, continuing.")
-            continue
+            # print("Eval not implemented, continuing.")
+            # continue
             logger.info("Evaluation begins at epoch {}".format(epoch))
 
-#            # TODO (Xiangyu): evaluation logic for prediction
-#            evaluate(eval_data, eval_loader, pixor,
-#                        args.batch_size, gpu=use_gpu, logger=logger,
-#                        args=args, epoch=epoch, processes=processes)
-            avg_eval_loss = AverageMeter()
+            avg_eval_ade = AverageMeter()
+            avg_eval_fde = AverageMeter()
             with torch.no_grad():
-                for iteration, batch in enumerate(train_loader):
-                    x = batch['x']
-                    x = x.view(x.shape[0]*x.shape[1],x.shape[2],x.shape[3])
-            
-                    y = batch['y']
-                    y = y.view(y.shape[0]*y.shape[2], y.shape[1])
-                    output, attn = model(x)
-                    output = output.squeeze(1)
+                for iteration, batch in enumerate(eval_loader):
+
+                    # batch_size x 30 x 2
+                    y = batch.y.cuda(non_blocking=True)
+                    y = y.view(-1, args.pred_len, 2)
+
+                    # x: batch_sizex20x6
+                    x = batch.x.cuda(non_blocking=True)
+                    outputs = torch.zeros_like(y)
+                    for i in range(30):
+                        output = model(x)
+                        output = output.squeeze(1)
+                        outputs[:,i,:] = output 
+
+                        x = window_shift_batch_version(x, output)
+                    # outputs: batch_size x 30 x 2
+
+                    outputs = outputs.cpu().detach().numpy()
+                    y = y.cpu().detach().numpy()  
+                    ade, fde = get_displacement_errors(outputs, y)                    
                     
-                    loss = reg_criterion(output, y)
-                    
-                    loss = torch.flatten(loss).sum()
-                    avg_eval_loss.update(loss.item())
-            logger.info("evaluation at epoch {:d}, loss: {:.5f},"
+                    avg_eval_ade.update(ade)
+                    avg_eval_fde.update(fde)
+            logger.info("evaluation at epoch {:d}, ade: {:.5f}, fde: {:.5f}"
                             .format(
                                 epoch,
-                                avg_loss.avg))
+                                avg_eval_ade.avg,
+                                avg_eval_fde.avg))
            
         if epoch % args.save_every == 0:
             saveto = osp.join(savepath, "checkpoint_{}.pth.tar".format(epoch))
