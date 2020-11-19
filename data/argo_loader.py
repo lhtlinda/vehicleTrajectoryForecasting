@@ -93,6 +93,8 @@ class Argo_geometric(InMemoryDataset):
                     inputs[i,:,:] = inputs_i
                     inputs_i = window_shift(inputs_i, label_i)
                 # inputs = inputs.unsqueeze(0)
+                # inputs: 30 x 20 x 6
+                # y: 30 x 2
                 data = Data(x=inputs, y=torch.from_numpy(y).float())
 
                 data_list.append(data)
@@ -103,10 +105,13 @@ class Argo_geometric(InMemoryDataset):
                 print('\r'+str(count)+'/'+str(len(files)),end="")
                 # if count>100000:
                 #     break
-
-                x, y = process_data(file, self.obs_len, self.pred_len)
                 
+                x, y = process_data(file, self.obs_len, self.pred_len)
+                   
                 inputs = torch.from_numpy(x).float()
+                
+                # inputs: 20 x 6 
+                # y : 30 x 2
                 data = Data(x=inputs, y=torch.from_numpy(y).float())
 
                 data_list.append(data)
