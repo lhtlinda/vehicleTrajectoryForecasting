@@ -41,6 +41,7 @@ class Argo_geometric(InMemoryDataset):
     def __init__(self, obs_len, pred_len, raw_data_path, processed_data_path, split = 'train', 
                 root="/home/junanchen/anaconda3/envs/GNN/vehicleTrajectoryForecasting-main/mini/",transform = None,  pre_transform = None):
 
+        self.split = split
         self.obs_len = obs_len
         self.pred_len = pred_len
         self.raw_data_path = raw_data_path + split + '/'
@@ -73,36 +74,45 @@ class Argo_geometric(InMemoryDataset):
         files = self.raw_file_names
 
         count = 0
-        for file in files:
-            count += 1
-            print('\r'+str(count)+'/'+str(len(files)),end="")
-            # if count>100000:
-            #     break
 
-            x, y = process_data(file, self.obs_len, self.pred_len)
-            inputs = torch.from_numpy(x).float()
+        if self.split == 'train':
+            for file in files:
+                count += 1
+                print('\r'+str(count)+'/'+str(len(files)),end="")
+                # if count>100000:
+                #     break
 
-            for i in range(y.shape[0]):
+                x, y = process_data(file, self.obs_len, self.pred_len)
                 
+        
+                inputs = torch.zeros(y.shape[0], x.shape[1], x.shape[2])
+                inputs_i = torch.from_numpy(x).float()
 
-            
-                label = torch.from_numpy(y[i,:]).float()
-                
-                data = Data(x=inputs, y=label.unsqueeze(0))
+                for i in range(y.shape[0]):
+                    label_i = torch.from_numpy(y[i,:]).float()
+                    inputs[i,:,:] = inputs_i
+                    inputs_i = window_shift(inputs_i, label_i)
+                # inputs = inputs.unsqueeze(0)
+                data = Data(x=inputs, y=torch.from_numpy(y).float())
+
                 data_list.append(data)
 
-                inputs = window_shift(inputs, label)
+        if self.split == 'val' or self.split == 'test':
+            for file in files:
+                count += 1
+                print('\r'+str(count)+'/'+str(len(files)),end="")
+                # if count>100000:
+                #     break
 
+                x, y = process_data(file, self.obs_len, self.pred_len)
+                
+                inputs = torch.from_numpy(x).float()
+                data = Data(x=inputs, y=torch.from_numpy(y).float())
 
+                data_list.append(data)
             # print(x)
             # print(y)
 
-            
-            num_obj = 5
-            edge_index_row2 = torch.linspace(1, num_obj-1, steps=num_obj-1).view(1,-1)
-            edge_index_row1 = torch.zeros(num_obj - 1).view(1,-1)
-            edge_index = torch.cat((edge_index_row1, edge_index_row2),0)
-            edge_index = edge_index.long()
 
 
 
